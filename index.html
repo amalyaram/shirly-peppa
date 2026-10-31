@@ -236,7 +236,7 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
       <div class="canvas-wrap" id="cwrap">
         <canvas id="gcanvas"></canvas>
         <canvas id="tcanvas"></canvas>
-        <div class="hint" id="thint">Trace the dots with your finger 🐽</div>
+        <div class="hint" id="thint">Start at 1 and follow the arrows 🐽</div>
       </div>
       <div class="trace-ctl">
         <button class="ctl" id="tprev">◀ Back</button>
@@ -405,8 +405,15 @@ $$('[data-go]').forEach(b=>b.onclick=()=>{
 /* ---------- quiz engine ---------- */
 const TITLES={read:'Reading 📖',math:'Numbers 🔢',hebrew:'עברית 🇮🇱'};
 let cur=null;
-function level(modeId){const st=S.lv[modeId]||0;return Math.min(3,1+Math.floor(st/8))}
-function bumpStreak(modeId,ok){S.lv[modeId]=Math.max(0,(S.lv[modeId]||0)+(ok?1:-1));save()}
+const UPS=[0,4,5,6,6]; // correct answers in a row needed to leave each level
+function lvState(id){let v=S.lv[id];if(!v||typeof v!=='object'){v={lv:1,run:0,miss:0};S.lv[id]=v}return v}
+function level(id){return lvState(id).lv}
+function bumpStreak(id,ok){
+  const v=lvState(id);let ev=null;
+  if(ok){v.run++;v.miss=0;if(v.lv<4&&v.run>=UPS[v.lv]){v.lv++;v.run=0;ev='up'}}
+  else{v.miss++;v.run=0;if(v.miss>=3&&v.lv>1){v.lv--;v.miss=0;ev='down'}}
+  save();return ev;
+}
 function startModule(id){
   const M=MODULES[id];M.el=M.el||$(`[data-screen="${id}"]`);
   cur={id,M,mode:M.modes.find(m=>m.gen)};
@@ -422,8 +429,8 @@ function renderModes(){
 }
 function renderStreak(){
   const box=$('.streak',cur.M.el);box.innerHTML='';
-  const st=(S.lv[cur.mode.id]||0)%8,lv=level(cur.mode.id);
-  for(let i=0;i<8;i++)box.append(el('i',i<st?'on':''));
+  const v=lvState(cur.mode.id),lv=v.lv,need=UPS[lv];
+  for(let i=0;i<need;i++)box.append(el('i',i<v.run?'on':''));
   const l=el('div','lvl',cur.id==='hebrew'?'שלב '+lv:'Level '+lv);box.append(l);
 }
 function next(){
@@ -433,21 +440,24 @@ function next(){
   renderStreak();
   if(q.type==='spell')renderSpell(q);else renderChoice(q);
 }
-function good(q){
-  FX.ok();award(1);bumpStreak(cur.mode.id,true);renderStreak();
+function good(q,pre){
+  FX.ok();award(1);const ev=bumpStreak(cur.mode.id,true);renderStreak();
   combo++;const extra=q.onGood?q.onGood():[];
-  const c=COMBO[q.lang][combo];
-  TTS.sayAll([{t:praise(q.lang),l:q.lang}].concat(extra,c?[{t:nm(c,q.lang),l:q.lang}]:[]));
-  if(c)burst();
+  const c=COMBO[q.lang][combo];const lv=level(cur.mode.id);
+  const list=(pre?[{t:pre,l:q.lang}]:[]).concat([{t:praise(q.lang),l:q.lang}],extra,c?[{t:nm(c,q.lang),l:q.lang}]:[]);
+  if(ev==='up')list.push({t:q.lang==='he'?`עלית שלב! שלב ${lv}!`:`Level up! Level ${lv}!`,l:q.lang});
+  TTS.sayAll(list);
+  if(c||ev==='up')burst();
 }
-function bad(q){FX.no();combo=0;bumpStreak(cur.mode.id,false);renderStreak();TTS.say(retry(q.lang),q.lang)}
+function bad(q,pre){FX.no();combo=0;bumpStreak(cur.mode.id,false);renderStreak();TTS.sayAll((pre?[{t:pre,l:q.lang}]:[]).concat([{t:retry(q.lang),l:q.lang}]))}
 
 function renderChoice(q){
   const g=$('.game',cur.M.el);g.innerHTML='';
   const instr=el('div','instr',(q.instr||'')+(q.he?`<small>${q.he}</small>`:''));
   const prompt=el('div','prompt',q.prompt||'');
   const spk=el('button','icon-btn speak','🔊');spk.setAttribute('aria-label','הקראה');
-  spk.onclick=()=>{FX.tap();q.say&&q.say()};
+  const voice=()=>{const v=(q.voice?q.voice():[]).map(x=>Object.assign({l:q.lang},x));const list=(v[0]&&v[0].t===q.instr)?v:[{t:q.instr,l:q.lang}].concat(v);TTS.sayAll(list)};
+  spk.onclick=()=>{FX.tap();voice()};
   const ch=el('div','choices'+(q.choices.length===2?' c2':q.choices.length===4?' c4':''));
   let done=false;
   q.choices.forEach(c=>{
@@ -455,14 +465,14 @@ function renderChoice(q){
     if(c.dir)b.dir=c.dir;
     b.onclick=()=>{
       if(done||b.disabled)return;
-      if(c.ok){done=true;b.classList.add('ok');good(q);setTimeout(next,1500)}
-      else{b.classList.add('bad');b.disabled=true;bad(q)}
+      if(c.ok){done=true;b.classList.add('ok');good(q,c.say);setTimeout(next,c.say?1900:1500)}
+      else{b.classList.add('bad');b.disabled=true;bad(q,c.say)}
     };
     ch.append(b);
   });
   g.append(instr,prompt,spk,ch);
   if(q.after)q.after(prompt);
-  if(q.say&&q.autoSay!==false)setTimeout(()=>q.say(),350);
+  if(q.autoSay!==false)setTimeout(voice,350);
 }
 
 function renderSpell(q){
@@ -473,7 +483,7 @@ function renderSpell(q){
   const spk=el('button','icon-btn speak','🔊');spk.onclick=()=>{FX.tap();TTS.say(word)};
   const slots=el('div','slots');const sl=[];
   for(let i=0;i<word.length;i++){const s=el('div','slot','');slots.append(s);sl.push(s)}
-  const letters=shuffle(word.split('').concat(sample('abcdefghijklmnopqrstuvwxyz'.split(''),2,l=>word.includes(l))));
+  const letters=shuffle(word.split('').concat(sample('abcdefghijklmnopqrstuvwxyz'.split(''),q.extra||2,l=>word.includes(l))));
   const tiles=el('div','tiles-l');let pos=0;
   letters.forEach(l=>{
     const t=el('button','tile-l2',l);
@@ -482,7 +492,7 @@ function renderSpell(q){
       if(l===word[pos]){
         t.classList.add('used');sl[pos].textContent=l;sl[pos].classList.add('f');pos++;
         FX.tap();TTS.say(PH[l]||l,'en',0.9);
-        if(pos===word.length){setTimeout(()=>{FX.ok();award(1);bumpStreak(cur.mode.id,true);renderStreak();combo++;TTS.sayAll([{t:word,l:'en'},{t:praise('en'),l:'en'}]);setTimeout(next,1800)},300)}
+        if(pos===word.length){setTimeout(()=>{q.onGood=()=>[];good(q,word);setTimeout(next,1800)},300)}
       }else{t.classList.add('bad');setTimeout(()=>t.classList.remove('bad'),450);bad(q)}
     };
     tiles.append(t);
@@ -492,126 +502,144 @@ function renderSpell(q){
 }
 
 /* ---------- generators: reading ---------- */
+const NOPT=[0,2,3,3,4];
 function genSounds(lv){
-  const L=pick(ENW);
-  const n=lv>=2?3:2;
+  const L=pick(ENW);const n=NOPT[lv]-1;
   const used=new Set([L[0],L[2]]);
-  const others=sample(ENW,n*4,x=>x[0]===L[0]||x[2]===L[2]).filter(x=>{if(used.has(x[0])||used.has(x[2]))return false;used.add(x[0]);used.add(x[2]);return true}).slice(0,n);
-  const mk=(x,ok)=>({html:`${x[2]}${lv<3?`<small>${x[1]}</small>`:''}`,ok});
+  const others=sample(ENW,n*6,x=>x[0]===L[0]||x[2]===L[2]).filter(x=>{if(used.has(x[0])||used.has(x[2]))return false;used.add(x[0]);used.add(x[2]);return true}).slice(0,n);
+  const mk=(x,ok)=>({html:`${x[2]}${lv<3?`<small>${x[1]}</small>`:''}`,ok,say:x[1]});
+  const ph=PH[L[0].toLowerCase()];
   return {
-    instr:`Which picture starts with ${L[0]}?`,he:`איזו תמונה מתחילה באות ${L[0]}?`,
-    prompt:`<span class="big" dir="ltr">${L[0]}${L[0].toLowerCase()}</span>`,
-    say:()=>TTS.sayAll([{t:`${L[0]}.`},{t:`${PH[L[0].toLowerCase()]}.`,rate:0.75}]),
+    instr:lv<4?`Which picture starts with ${L[0]}?`:`Which picture starts with the sound ${ph}?`,
+    he:lv<4?`איזו תמונה מתחילה באות ${L[0]}?`:'איזו תמונה מתחילה בצליל ששמעת?',
+    prompt:lv<4?`<span class="big" dir="ltr">${L[0]}${L[0].toLowerCase()}</span>`:'<span class="big">👂</span>',
+    voice:()=>lv<4?[{t:`${L[0]}.`},{t:`${ph}.`,rate:0.75}]:[{t:`${ph}.`,rate:0.7},{t:`${ph}.`,rate:0.7}],
     onGood:()=>[{t:`${L[0]} for ${L[1]}`,l:'en'}],
     choices:shuffle([mk(L,true)].concat(others.map(x=>mk(x,false))))
   };
 }
 function genWord(lv){
-  const pool=WORDS.filter(w=>lv===1?w[0].length===3:true);
-  const W=pick(pool);const others=sample(WORDS,2,x=>x[0]===W[0]||x[1]===W[1]);
+  const pool=WORDS.filter(w=>lv===1?w[0].length===3:lv===2?true:w[0].length>=4);
+  const W=pick(pool);const n=NOPT[lv]-1;const others=sample(WORDS,n,x=>x[0]===W[0]||x[1]===W[1]);
   const letters=W[0].split('');
   return {
     instr:'Read the word. Find the picture.',he:'קראי את המילה ובחרי תמונה',
     prompt:`<span class="word">${letters.map(l=>`<b class="lt">${l}</b>`).join('')}</span>`,
-    say:()=>TTS.sayAll(letters.map(l=>({t:PH[l]+'.',l:'en',rate:0.7})).concat([{t:W[0],l:'en'}])),
+    voice:()=>lv<3?letters.map(l=>({t:PH[l]+'.',rate:0.7})).concat([{t:W[0]}]):[],
+    autoSay:lv<3,
     after:p=>$$('.lt',p).forEach((b,i)=>b.onclick=()=>{b.classList.add('hit');setTimeout(()=>b.classList.remove('hit'),300);TTS.say(PH[letters[i]],'en',0.75)}),
     onGood:()=>[{t:W[0],l:'en'}],
-    choices:shuffle([{html:W[1],ok:true}].concat(others.map(x=>({html:x[1],ok:false}))))
+    choices:shuffle([{html:W[1],ok:true,say:W[0]}].concat(others.map(x=>({html:x[1],ok:false,say:x[0]}))))
   };
 }
 function genSight(lv){
-  const w=pick(SIGHT);const n=lv>=3?3:2;
-  const others=sample(SIGHT,n,x=>x===w||x.toLowerCase()===w.toLowerCase());
+  const w=pick(SIGHT);const n=NOPT[lv]-1;
+  let others=lv>=4?sample(SIGHT,n,x=>x===w||x[0].toLowerCase()!==w[0].toLowerCase()):[];
+  if(others.length<n)others=others.concat(sample(SIGHT,n-others.length,x=>x===w||others.includes(x)||x.toLowerCase()===w.toLowerCase()));
   return {
     instr:'Listen. Find the word.',he:'הקשיבי ומצאי את המילה',
     prompt:'<span class="big">👂</span>',
-    say:()=>TTS.say(w),
+    voice:()=>[{t:w},{t:w,rate:0.7}],
     onGood:()=>[{t:w,l:'en'}],
-    choices:shuffle([{html:w,ok:true,cls:'text',dir:'ltr'}].concat(others.map(x=>({html:x,ok:false,cls:'text',dir:'ltr'}))))
+    choices:shuffle([{html:w,ok:true,cls:'text',dir:'ltr',say:w}].concat(others.map(x=>({html:x,ok:false,cls:'text',dir:'ltr',say:x}))))
   };
 }
 function genSpell(lv){
-  const pool=WORDS.filter(w=>lv===1?w[0].length===3:true);
-  const W=pick(pool);return {type:'spell',word:W[0],emoji:W[1]};
+  const pool=WORDS.filter(w=>lv===1?w[0].length===3:lv===2?true:w[0].length>=4);
+  const W=pick(pool);return {type:'spell',word:W[0],emoji:W[1],extra:lv<3?2:lv===3?3:4};
 }
 function genSentence(lv){
-  const s=pick(SENT);const others=sample(SENT,2,x=>x[0]===s[0]||x[1]===s[1]);
+  const s=pick(SENT);const n=NOPT[lv]-1;const others=sample(SENT,n,x=>x[0]===s[0]||x[1]===s[1]);
   const words=s[0].replace('.','').split(' ');
   return {
     instr:'Read the sentence. Find the picture.',he:'קראי את המשפט ובחרי תמונה',
     prompt:`<div class="sent">${words.map(w=>`<span class="w">${w}</span>`).join('')}</div>`,
-    say:()=>TTS.say(s[0],'en',0.8),
+    voice:()=>lv<3?[{t:s[0],rate:0.8}]:[],
     autoSay:lv<3,
     after:p=>$$('.w',p).forEach((b,i)=>b.onclick=()=>{b.classList.add('hit');setTimeout(()=>b.classList.remove('hit'),300);TTS.say(words[i])}),
+    onGood:()=>[{t:s[0],l:'en',rate:0.85}],
     choices:shuffle([{html:s[1],ok:true}].concat(others.map(x=>({html:x[1],ok:false}))))
   };
 }
 
 /* ---------- generators: math ---------- */
-const MAX=[0,5,10,20];
+const MAX=[0,5,10,20,20];
 function numChoices(ans,max,n=3){
   const set=new Set([ans]);let tries=0;
-  while(set.size<n&&tries++<50){const d=ans+(rnd(5)-2);if(d>=0&&d<=Math.max(max,ans+2))set.add(d)}
+  while(set.size<n&&tries++<80){const d=ans+(rnd(7)-3);if(d>=0&&d<=Math.max(max,ans+3))set.add(d)}
   while(set.size<n)set.add(ans+set.size);
-  return shuffle([...set]).map(v=>({html:String(v),ok:v===ans,cls:'text',dir:'ltr'}));
+  return shuffle([...set]).map(v=>({html:String(v),ok:v===ans,cls:'text',dir:'ltr',say:String(v)}));
 }
 const objs=(e,n,cls='')=>`<div class="objs ${cls}">${Array.from({length:n},()=>`<span>${e}</span>`).join('')}</div>`;
 function genCount(lv){
-  const max=lv===3?15:MAX[lv];const n=1+rnd(max);const e=pick(ITEMS);
-  return {instr:'How many?',he:'כמה יש?',prompt:objs(e,n),say:()=>TTS.say('How many?'),onGood:()=>[{t:`There are ${n}`,l:'en'}],choices:numChoices(n,max)};
+  const max=[0,5,10,15,20][lv];const n=1+rnd(max);const e=pick(ITEMS);
+  const vis=lv<4?objs(e,n):`<div class="objs">${Array.from({length:n},(_,i)=>`<span>${i%2?pick(ITEMS):e}</span>`).join('')}</div>`;
+  return {instr:'How many?',he:'כמה יש?',prompt:vis,voice:()=>[{t:'How many?'}],onGood:()=>[{t:`There are ${n}`,l:'en'}],choices:numChoices(n,max,lv>=3?4:3)};
 }
 function genAdd(lv){
   const max=MAX[lv];const a=1+rnd(max-1);const b=1+rnd(Math.max(1,max-a));const e=pick(ITEMS),e2=lv===1?e:pick(ITEMS);
-  const vis=lv<3?`<div class="eq"><span class="grp">${e.repeat(a).split('').join('')}</span><b>+</b><span class="grp">${e2.repeat(b)}</span></div>`:'';
+  const vis=lv<3?`<div class="eq"><span class="grp">${e.repeat(a)}</span><b>+</b><span class="grp">${e2.repeat(b)}</span></div>`:'';
   return {instr:`What is ${a} plus ${b}?`,he:'כמה זה ביחד?',prompt:`${vis}<div class="numline">${a} + ${b} = <b class="q">?</b></div>`,
-    say:()=>TTS.say(`What is ${a} plus ${b}?`),onGood:()=>[{t:`${a} plus ${b} is ${a+b}`,l:'en'}],choices:numChoices(a+b,max)};
+    voice:()=>[{t:`What is ${a} plus ${b}?`}],onGood:()=>[{t:`${a} plus ${b} is ${a+b}`,l:'en'}],choices:numChoices(a+b,max,lv>=3?4:3)};
 }
 function genSub(lv){
   const max=MAX[lv];const a=2+rnd(max-1);const b=1+rnd(a-1);const e=pick(ITEMS);
   const vis=lv<3?`<div class="objs">${Array.from({length:a},(_,i)=>`<span class="${i<b?'x':''}">${e}</span>`).join('')}</div>`:'';
   return {instr:`${a} take away ${b}. How many are left?`,he:'כמה נשארו?',prompt:`${vis}<div class="numline">${a} − ${b} = <b class="q">?</b></div>`,
-    say:()=>TTS.say(`${a} take away ${b}. How many are left?`),onGood:()=>[{t:`${a} take away ${b} is ${a-b}`,l:'en'}],choices:numChoices(a-b,max)};
+    voice:()=>[{t:`${a} take away ${b}. How many are left?`}],onGood:()=>[{t:`${a} take away ${b} is ${a-b}`,l:'en'}],choices:numChoices(a-b,max,lv>=3?4:3)};
 }
 function genCompare(lv){
   const max=MAX[lv];let a=1+rnd(max),b=1+rnd(max);while(b===a)b=1+rnd(max);
-  const more=lv<2||rnd(2)===0;const e=pick(ITEMS),e2=lv===1?e:pick(ITEMS);
+  const more=lv<2||rnd(2)===0;const e=pick(ITEMS),e2=lv<3?e:pick(ITEMS);
   const t=more?'Which one has more?':'Which one has less?';
-  return {instr:t,he:more?'איפה יש יותר?':'איפה יש פחות?',prompt:'<span class="big">⚖️</span>',say:()=>TTS.say(t),
+  const mk=(v,em)=>lv<4?{html:objs(em,v,'small'),cls:'grp',say:String(v)}:{html:String(v),cls:'text',dir:'ltr',say:String(v)};
+  return {instr:t,he:more?'איפה יש יותר?':'איפה יש פחות?',prompt:'<span class="big">⚖️</span>',voice:()=>[{t}],
     onGood:()=>[{t:more?`${Math.max(a,b)} is more than ${Math.min(a,b)}`:`${Math.min(a,b)} is less than ${Math.max(a,b)}`,l:'en'}],
-    choices:[{html:objs(e,a,'small'),ok:more?a>b:a<b,cls:'grp'},{html:objs(e2,b,'small'),ok:more?b>a:b<a,cls:'grp'}]};
+    choices:[Object.assign(mk(a,e),{ok:more?a>b:a<b}),Object.assign(mk(b,e2),{ok:more?b>a:b<a})]};
 }
 function genSeq(lv){
-  const max=lv===1?10:lv===2?20:30;const step=lv===3&&rnd(2)?2:1;
-  const start=1+rnd(Math.max(1,max-4*step));const seq=Array.from({length:5},(_,i)=>start+i*step);
+  const max=[0,10,20,30,50][lv];const step=lv===4?pick([2,5,10]):lv===3&&rnd(2)?2:1;
+  const start=step>1?step*(1+rnd(Math.max(1,Math.floor(max/step)-4))):1+rnd(Math.max(1,max-4));
+  const seq=Array.from({length:5},(_,i)=>start+i*step);
   const gi=1+rnd(3);const ans=seq[gi];
   return {instr:'Which number is missing?',he:'איזה מספר חסר?',prompt:`<div class="seq">${seq.map((v,i)=>i===gi?'<b class="gap">?</b>':`<b>${v}</b>`).join('')}</div>`,
-    say:()=>TTS.say('Which number is missing?'),onGood:()=>[{t:seq.join(', '),l:'en'}],choices:numChoices(ans,max)};
+    voice:()=>[{t:'Which number is missing?'},{t:seq.map((v,i)=>i===gi?'hmm':v).join(', '),rate:0.8}],onGood:()=>[{t:seq.join(', '),l:'en'}],choices:numChoices(ans,max+step,lv>=3?4:3)};
 }
 
 /* ---------- generators: hebrew ---------- */
+const CONF=['בכ','גנ','דר','החת','וזין','סם','עצ','פף','כך','מם','נן','צץ','שת','טמ'];
+const heName=ch=>{const r=HE.find(x=>x[0]===ch);return r?r[1]:(HEF[ch]||ch)};
+function heDistract(L,n,lv){
+  let out=[];
+  if(lv>=4){const grp=CONF.filter(g=>g.includes(L[0])).join('');out=sample(HE,n,x=>x[0]===L[0]||!grp.includes(x[0]))}
+  if(out.length<n)out=out.concat(sample(HE,n-out.length,x=>x[0]===L[0]||out.includes(x)));
+  return out;
+}
 function genHeLetter(lv){
-  const L=pick(HE);const n=lv>=3?3:2;const others=sample(HE,n,x=>x[0]===L[0]);
-  return {instr:'איזו אות שמעת?',prompt:'<span class="big he">👂</span>',say:()=>TTS.say(`האות ${L[1]}`,'he'),
+  const L=pick(HE);const n=NOPT[lv]-1;const others=heDistract(L,n,lv);
+  return {instr:'איזו אות שמעת?',prompt:'<span class="big he">👂</span>',voice:()=>[{t:`האות ${L[1]}`}],
     onGood:()=>[{t:`${L[1]}. ${L[2]}`,l:'he'}],
-    choices:shuffle([{html:L[0],ok:true,cls:'text'}].concat(others.map(x=>({html:x[0],ok:false,cls:'text'}))))};
+    choices:shuffle([{html:L[0],ok:true,cls:'text',say:L[1]}].concat(others.map(x=>({html:x[0],ok:false,cls:'text',say:x[1]}))))};
 }
 function genHeFirst(lv){
-  const L=pick(HE);const others=sample(HE,2,x=>x[0]===L[0]);
+  const L=pick(HE);const n=NOPT[lv]-1;const others=heDistract(L,n,lv);
   return {instr:'באיזו אות מתחילה המילה?',prompt:`<span class="big he">${L[3]}</span>${lv<3?`<span class="he-word">${L[2]}</span>`:''}`,
-    say:()=>TTS.say(L[2],'he'),onGood:()=>[{t:`${L[2]} מתחיל באות ${L[1]}`,l:'he'}],
-    choices:shuffle([{html:L[0],ok:true,cls:'text'}].concat(others.map(x=>({html:x[0],ok:false,cls:'text'}))))};
+    voice:()=>[{t:L[2]}],onGood:()=>[{t:`${L[2]} מתחיל באות ${L[1]}`,l:'he'}],
+    choices:shuffle([{html:L[0],ok:true,cls:'text',say:L[1]}].concat(others.map(x=>({html:x[0],ok:false,cls:'text',say:x[1]}))))};
 }
 function genHeWord(lv){
-  const W=pick(HEW);const others=sample(HEW,2,x=>x[1]===W[1]||x[2]===W[2]);
-  return {instr:'קראי את המילה ובחרי תמונה',prompt:`<span class="he-word">${W[0]}</span>`,say:()=>TTS.say(W[1],'he',0.8),autoSay:lv<2,
+  const W=pick(HEW);const n=NOPT[lv]-1;const others=sample(HEW,n,x=>x[1]===W[1]||x[2]===W[2]);
+  return {instr:'קראי את המילה ובחרי תמונה',prompt:`<span class="he-word">${W[0]}</span>`,voice:()=>lv<2?[{t:W[1],rate:0.8}]:[],autoSay:lv<2,
     onGood:()=>[{t:W[1],l:'he'}],
-    choices:shuffle([{html:W[2],ok:true}].concat(others.map(x=>({html:x[2],ok:false}))))};
+    choices:shuffle([{html:W[2],ok:true,say:W[1]}].concat(others.map(x=>({html:x[2],ok:false,say:x[1]}))))};
 }
 function genHeListen(lv){
-  const W=pick(HEW);const n=lv>=3?3:2;const others=sample(HEW,n,x=>x[1]===W[1]);
-  return {instr:'הקשיבי ומצאי את המילה',prompt:`<span class="big he">👂</span>`,say:()=>TTS.say(W[1],'he',0.8),
+  const W=pick(HEW);const n=NOPT[lv]-1;
+  let others=lv>=4?sample(HEW,n,x=>x[1]===W[1]||x[1][0]!==W[1][0]):[];
+  if(others.length<n)others=others.concat(sample(HEW,n-others.length,x=>x[1]===W[1]||others.includes(x)));
+  return {instr:'הקשיבי ומצאי את המילה',prompt:'<span class="big he">👂</span>',voice:()=>[{t:W[1],rate:0.8}],
     onGood:()=>[{t:W[1],l:'he'}],
-    choices:shuffle([{html:W[0],ok:true,cls:'text'}].concat(others.map(x=>({html:x[0],ok:false,cls:'text'}))))};
+    choices:shuffle([{html:W[0],ok:true,cls:'text',say:W[1]}].concat(others.map(x=>({html:x[0],ok:false,cls:'text',say:x[1]}))))};
 }
 
 const MODULES={
@@ -637,6 +665,101 @@ const MODULES={
     {id:'tr-he',label:'✏️ כתיבה',open:()=>Trace.open('he')}]}
 };
 
+/* ---------- tracing: stroke data (box 0..100 wide; y: 0 top line, 100 baseline, 135 descender) ---------- */
+const arc=(cx,cy,rx,ry,a0,a1,n)=>{const pts=[];n=n||Math.max(6,Math.round(Math.abs(a1-a0)/15));for(let i=0;i<=n;i++){const a=(a0+(a1-a0)*i/n)*Math.PI/180;pts.push([cx+rx*Math.cos(a),cy+ry*Math.sin(a)])}return pts};
+const STROKES={
+ A:[[[50,0],[10,100]],[[50,0],[90,100]],[[25,62],[75,62]]],
+ B:[[[15,0],[15,100]],[[15,0],[50,0],...arc(50,25,28,25,-90,90),[15,50]],[[15,50],[52,50],...arc(52,75,32,25,-90,90),[15,100]]],
+ C:[arc(50,50,40,50,-50,-230)],
+ D:[[[15,0],[15,100]],[[15,0],[40,0],...arc(40,50,45,50,-90,90),[15,100]]],
+ E:[[[15,0],[15,100]],[[15,0],[85,0]],[[15,50],[75,50]],[[15,100],[85,100]]],
+ F:[[[15,0],[15,100]],[[15,0],[85,0]],[[15,50],[70,50]]],
+ G:[[...arc(50,50,42,50,-50,-360),[60,50]]],
+ H:[[[15,0],[15,100]],[[85,0],[85,100]],[[15,50],[85,50]]],
+ I:[[[50,0],[50,100]],[[25,0],[75,0]],[[25,100],[75,100]]],
+ J:[[[60,0],[60,75],...arc(40,75,20,25,0,180)]],
+ K:[[[15,0],[15,100]],[[80,0],[15,55]],[[35,40],[85,100]]],
+ L:[[[15,0],[15,100],[85,100]]],
+ M:[[[10,100],[10,0]],[[10,0],[50,70],[90,0]],[[90,0],[90,100]]],
+ N:[[[15,100],[15,0]],[[15,0],[85,100]],[[85,100],[85,0]]],
+ O:[arc(50,50,42,50,-90,-450)],
+ P:[[[15,0],[15,100]],[[15,0],[52,0],...arc(52,27,33,27,-90,90),[15,54]]],
+ Q:[arc(50,50,42,50,-90,-450),[[62,70],[90,100]]],
+ R:[[[15,0],[15,100]],[[15,0],[52,0],...arc(52,27,33,27,-90,90),[15,54]],[[45,54],[85,100]]],
+ S:[[...arc(50,26,34,26,-30,-270),...arc(50,76,34,26,-90,150)]],
+ T:[[[15,0],[85,0]],[[50,0],[50,100]]],
+ U:[[[15,0],[15,60],...arc(50,60,35,40,180,0),[85,0]]],
+ V:[[[10,0],[50,100],[90,0]]],
+ W:[[[5,0],[28,100],[50,20],[72,100],[95,0]]],
+ X:[[[15,0],[85,100]],[[85,0],[15,100]]],
+ Y:[[[15,0],[50,50]],[[85,0],[50,50],[50,100]]],
+ Z:[[[15,0],[85,0],[15,100],[85,100]]],
+ a:[arc(45,72,27,28,-20,-380),[[72,45],[72,100]]],
+ b:[[[20,0],[20,100]],arc(47,72,27,28,-120,120)],
+ c:[arc(50,72,27,28,-50,-310)],
+ d:[arc(48,72,27,28,-20,-380),[[75,0],[75,100]]],
+ e:[[[20,72],[75,72],...arc(48,72,27,28,0,-300)]],
+ f:[[...arc(55,22,20,22,-20,-180),[35,22],[35,100]],[[15,50],[60,50]]],
+ g:[arc(45,72,27,28,-20,-380),[[72,45],[72,110],...arc(47,110,25,25,0,180)]],
+ h:[[[20,0],[20,100]],[[20,72],...arc(47,72,27,27,180,360),[74,100]]],
+ i:[[[50,45],[50,100]],[[50,20],[50,22]]],
+ j:[[[55,45],[55,110],...arc(35,110,20,25,0,180)],[[55,20],[55,22]]],
+ k:[[[20,0],[20,100]],[[65,45],[20,78]],[[32,70],[70,100]]],
+ l:[[[50,0],[50,100]]],
+ m:[[[15,45],[15,100]],[[15,65],...arc(32,65,17,20,180,360),[49,100]],[[49,65],...arc(66,65,17,20,180,360),[83,100]]],
+ n:[[[20,45],[20,100]],[[20,68],...arc(47,68,27,23,180,360),[74,100]]],
+ o:[arc(50,72,27,28,-90,-450)],
+ p:[[[22,45],[22,135]],arc(49,72,27,28,-120,120)],
+ q:[arc(47,72,27,28,-20,-380),[[74,45],[74,135]]],
+ r:[[[25,45],[25,100]],[[25,70],...arc(50,70,25,25,180,300)]],
+ s:[[...arc(50,58,22,14,-30,-270),...arc(50,86,22,14,-90,150)]],
+ t:[[[45,10],[45,85],...arc(60,85,15,15,180,90)],[[25,45],[70,45]]],
+ u:[[[22,45],[22,78],...arc(47,78,25,22,180,0),[72,45]],[[72,45],[72,100]]],
+ v:[[[20,45],[50,100],[80,45]]],
+ w:[[[10,45],[30,100],[50,55],[70,100],[90,45]]],
+ x:[[[22,45],[78,100]],[[78,45],[22,100]]],
+ y:[[[22,45],[50,100]],[[78,45],[35,135]]],
+ z:[[[22,45],[78,45],[22,100],[78,100]]],
+ '0':[arc(50,50,35,50,-90,-450)],
+ '1':[[[30,25],[55,0],[55,100]]],
+ '2':[[...arc(50,28,32,28,-150,60),[15,100],[85,100]]],
+ '3':[[...arc(50,26,30,26,-150,90),...arc(50,74,32,26,-90,150)]],
+ '4':[[[65,0],[15,65],[90,65]],[[65,0],[65,100]]],
+ '5':[[[80,0],[25,0],[20,45],...arc(50,70,32,30,-120,160)]],
+ '6':[[[72,0],[40,40],...arc(50,68,32,32,-150,-510)]],
+ '7':[[[15,0],[85,0],[40,100]]],
+ '8':[arc(50,27,28,27,-90,-450),arc(50,73,30,27,-90,270)],
+ '9':[[...arc(50,30,30,30,0,-360),[80,30],[65,100]]],
+ 'א':[[[82,18],[20,100]],[[18,28],[48,60]],[[52,58],[82,100]]],
+ 'ב':[[[20,18],[82,18],[82,100]],[[82,100],[12,100]]],
+ 'ג':[[[45,18],[65,18],[65,100]],[[65,62],[30,100]]],
+ 'ד':[[[10,18],[90,18]],[[75,18],[75,100]]],
+ 'ה':[[[10,18],[85,18],[85,100]],[[18,42],[18,100]]],
+ 'ו':[[[42,18],[56,18],[56,100]]],
+ 'ז':[[[30,18],[72,18]],[[52,18],[52,100]]],
+ 'ח':[[[15,18],[85,18],[85,100]],[[15,18],[15,100]]],
+ 'ט':[[[20,24],[20,70],...arc(50,70,30,30,180,0),[80,24]],[[80,24],[66,38]]],
+ 'י':[[[40,18],[60,18],[60,52]]],
+ 'כ':[[[15,18],[60,18],...arc(60,61,25,39,-90,90),[15,100]]],
+ 'ך':[[[15,18],[85,18],[85,125]]],
+ 'ל':[[[50,0],[72,18],[72,60]],[[72,60],[25,60],[25,85],...arc(45,85,20,15,180,90)]],
+ 'מ':[[[35,18],[80,18],[80,100],[45,100]],[[22,35],[22,100]]],
+ 'ם':[[[15,18],[85,18],[85,100],[15,100],[15,18]]],
+ 'נ':[[[50,18],[72,18],[72,100],[20,100]]],
+ 'ן':[[[42,18],[62,18],[62,125]]],
+ 'ס':[arc(50,61,35,39,-90,-450)],
+ 'ע':[[[82,18],[55,75],[15,100]],[[22,18],[50,70]]],
+ 'פ':[[[15,18],[62,18],...arc(62,61,25,39,-90,90),[15,100]],[[70,42],[50,42],[50,62]]],
+ 'ף':[[[15,18],[80,18],[80,125]],[[70,42],[50,42],[50,62]]],
+ 'צ':[[[80,18],[58,60],[20,100],[80,100]],[[25,18],[52,62]]],
+ 'ץ':[[[72,18],[72,125]],[[28,18],[72,70]]],
+ 'ק':[[[25,18],[78,18],[78,70],[60,80]],[[25,35],[25,125]]],
+ 'ר':[[[15,18],[70,18],...arc(70,36,14,14,-90,0),[84,100]]],
+ 'ש':[[[18,18],[18,100],[82,100],[82,18]],[[50,30],[50,100]]],
+ 'ת':[[[20,18],[80,18],[80,100]],[[28,18],[28,100],[12,100]]]
+};
+const BOX={upper:{top:0,base:100,bot:100},lower:{top:0,xh:45,base:100,bot:135},num:{top:0,base:100,bot:100},he:{top:18,base:100,bot:125}};
+
 /* ---------- tracing ---------- */
 const Trace={
   sets:{
@@ -645,11 +768,11 @@ const Trace={
     num:{label:'123',chars:[...'0123456789'],lang:'en'},
     he:{label:'א-ב',chars:[...'אבגדהוזחטיכךלמםנןסעפףצץקרשת'],lang:'he'}
   },
-  setId:'upper',idx:0,W:0,H:0,dpr:1,drawing:false,passed:false,strokes:0,anim:0,
+  setId:'upper',idx:0,W:0,H:0,dpr:1,drawing:false,passed:false,nUser:0,anim:0,
   init(){
     this.wrap=$('#cwrap');this.cv=$('#tcanvas');this.ctx=this.cv.getContext('2d');
     this.gcv=$('#gcanvas');this.gctx=this.gcv.getContext('2d');
-    this.mask=document.createElement('canvas');this.tol=document.createElement('canvas');
+    this.tol=document.createElement('canvas');
     const cv=this.cv;
     cv.addEventListener('pointerdown',e=>this.down(e));
     cv.addEventListener('pointermove',e=>this.move(e));
@@ -663,11 +786,11 @@ const Trace={
     $('#tsay').onclick=()=>{FX.tap();this.sayChar()};
     $('#tchar').onclick=()=>{FX.tap();$('#tpick').classList.toggle('open')};
   },
+  he(){return this.sets[this.setId].lang==='he'},
   open(setId){
     this.setId=setId;this.idx=0;go('trace');$('#ttl').textContent='Trace ✏️';
     $('#tpick').classList.remove('open');this.renderChips();this.renderPicker();
-    const p=document.fonts&&document.fonts.load?document.fonts.load('700 100px Fredoka'):Promise.resolve();
-    p.catch(()=>{}).then(()=>{this.W=0;this.resize()});
+    this.W=0;this.resize();
   },
   renderChips(){
     const box=$('#tmodes');box.innerHTML='';
@@ -689,66 +812,97 @@ const Trace={
     if(Math.abs(r.width-this.W)<1&&Math.abs(r.height-this.H)<1)return;
     this.W=r.width;this.H=r.height;this.dpr=Math.min(2,window.devicePixelRatio||1);
     [this.cv,this.gcv].forEach(c=>{c.width=Math.round(this.W*this.dpr);c.height=Math.round(this.H*this.dpr)});
-    this.mask.width=this.tol.width=Math.round(this.W);this.mask.height=this.tol.height=Math.round(this.H);
+    this.tol.width=Math.round(this.W);this.tol.height=Math.round(this.H);
     this.layout();this.show();
   },
   layout(){
-    const {W,H}=this;const set=this.sets[this.setId];const m=this.mask.getContext('2d');
-    const font=px=>`700 ${px}px Fredoka, Nunito, Arial, sans-serif`;
-    m.font=font(100);
-    const asc=c=>m.measureText(c).actualBoundingBoxAscent,desc=c=>m.measureText(c).actualBoundingBoxDescent;
-    let top,bot=0,xh=null;
-    if(this.setId==='upper'){top=asc('H')}
-    else if(this.setId==='lower'){top=asc('b');bot=desc('g');xh=asc('x')}
-    else if(this.setId==='num'){top=asc('0')}
-    else{top=asc('ל');bot=desc('ך')}
-    let fs=100*(H*0.76)/(top+bot);
-    const widest=Math.max(...set.chars.map(c=>m.measureText(c).width))*fs/100;
-    if(widest>W*0.8)fs*=W*0.8/widest;
-    const k=fs/100,total=(top+bot)*k,y0=(H-total)/2;
-    this.fs=fs;this.font=font(fs);this.penW=Math.max(16,fs*0.11);
-    this.lines={top:y0,base:y0+top*k,bot:y0+total,xh:xh!=null?y0+top*k-xh*k:null};
+    const {W,H}=this;const box=BOX[this.setId];
+    const k=Math.min(H*0.82/box.bot,W*0.7/100);
+    this.k=k;this.ox=(W-100*k)/2;this.oy=(H-box.bot*k)/2;
+    this.penW=Math.max(10,Math.min(26,9*k));
+    this.lines={top:this.oy+box.top*k,base:this.oy+100*k,xh:box.xh!=null?this.oy+box.xh*k:null,bot:box.bot>100?this.oy+box.bot*k:null};
   },
   current(){return this.sets[this.setId].chars[this.idx]},
+  P(p){return [this.ox+p[0]*this.k,this.oy+p[1]*this.k]},
+  // walk a polyline, calling fn(point, angle) every `gap` px; returns total length
+  walk(path,gap,fn){
+    let acc=0,len=0,next=0;
+    for(let i=1;i<path.length;i++){
+      const [x0,y0]=path[i-1],[x1,y1]=path[i];const d=Math.hypot(x1-x0,y1-y0);if(!d)continue;
+      const ang=Math.atan2(y1-y0,x1-x0);
+      while(next<=acc+d){const t=(next-acc)/d;fn([x0+(x1-x0)*t,y0+(y1-y0)*t],ang);next+=gap}
+      acc+=d;
+    }
+    return acc;
+  },
+  pointAt(path,frac){
+    let total=0;for(let i=1;i<path.length;i++)total+=Math.hypot(path[i][0]-path[i-1][0],path[i][1]-path[i-1][1]);
+    let target=total*frac,acc=0;
+    for(let i=1;i<path.length;i++){const d=Math.hypot(path[i][0]-path[i-1][0],path[i][1]-path[i-1][1]);
+      if(acc+d>=target||i===path.length-1){const t=d?(target-acc)/d:0;return {p:[path[i-1][0]+(path[i][0]-path[i-1][0])*t,path[i-1][1]+(path[i][1]-path[i-1][1])*t],ang:Math.atan2(path[i][1]-path[i-1][1],path[i][0]-path[i-1][0]),total}}
+      acc+=d}
+    return {p:path[0],ang:0,total};
+  },
   show(){
     if(!this.W)return;
     cancelAnimationFrame(this.anim);
-    const {W,H,dpr}=this;const ch=this.current();const L=this.lines;
-    this.passed=false;this.strokes=0;this.hinted=false;
-    $('#tmeter').style.width='0%';$('#thint').style.opacity=1;
-    $('#thint').textContent=this.sets[this.setId].lang==='he'?'עברי עם האצבע על הנקודות 🐽':'Trace the dots with your finger 🐽';
-    // mask + tolerance
-    const m=this.mask.getContext('2d');m.clearRect(0,0,W,H);
-    m.font=this.font;m.textAlign='center';m.textBaseline='alphabetic';m.fillStyle='#000';m.fillText(ch,W/2,L.base);
+    const {W,H,dpr,penW}=this;const ch=this.current();const L=this.lines;
+    this.passed=false;this.nUser=0;this.hinted=false;this.hinted2=false;this.dirHinted=false;
+    $('#tmeter').style.width='0%';
+    const h=$('#thint');h.style.opacity=1;
+    h.textContent=this.he()?'התחילי ב-1 ועקבי אחרי החצים 🐽':'Start at 1 and follow the arrows 🐽';
+    const strokes=(STROKES[ch]||[]).map(s=>s.map(p=>this.P(p)));
+    this.strokes=strokes;
+    // tolerance band (CSS px) + sample points along the strokes
     const t=this.tol.getContext('2d');t.clearRect(0,0,W,H);
-    t.font=this.font;t.textAlign='center';t.textBaseline='alphabetic';t.fillStyle='#000';t.strokeStyle='#000';t.lineJoin='round';t.lineWidth=this.penW*1.7;
-    t.strokeText(ch,W/2,L.base);t.fillText(ch,W/2,L.base);
-    this.maskData=m.getImageData(0,0,W,H).data;this.tolData=t.getImageData(0,0,W,H).data;
+    t.lineCap='round';t.lineJoin='round';t.strokeStyle='#000';t.fillStyle='#000';t.lineWidth=penW*2.4;
+    this.samples=[];
+    strokes.forEach(s=>{
+      if(s.length<2)return;
+      t.beginPath();t.moveTo(s[0][0],s[0][1]);s.slice(1).forEach(p=>t.lineTo(p[0],p[1]));t.stroke();
+      const len=this.walk(s,Math.max(5,penW*0.45),p=>this.samples.push(p));
+      if(len<penW)t.beginPath(),t.arc(s[0][0],s[0][1],penW*1.4,0,7),t.fill();
+    });
+    this.tolData=t.getImageData(0,0,W,H).data;
     // guide layer
     const g=this.gctx;g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
     const line=(y,color,w,dash)=>{g.beginPath();g.setLineDash(dash||[]);g.lineWidth=w;g.strokeStyle=color;g.moveTo(16,y);g.lineTo(W-16,y);g.stroke();g.setLineDash([])};
     line(L.top,'#4FA8E0',3);line(L.base,'#E0528F',3);
     if(L.xh!=null)line(L.xh,'#B9A9B1',2,[10,10]);
-    if(L.bot>L.base+2)line(L.bot,'#DDD3D8',2);
-    g.globalAlpha=0.1;g.fillStyle='#E0528F';g.font=this.font;g.textAlign='center';g.textBaseline='alphabetic';g.fillText(ch,W/2,L.base);g.globalAlpha=1;
-    const step=Math.max(7,Math.round(this.fs/26));const md=this.maskData;let first=null;
+    if(L.bot!=null)line(L.bot,'#DDD3D8',2);
+    g.lineCap='round';g.lineJoin='round';
+    strokes.forEach(s=>{ // faint body
+      g.beginPath();g.lineWidth=penW;g.strokeStyle='rgba(224,82,143,.13)';
+      g.moveTo(s[0][0],s[0][1]);(s.length>1?s.slice(1):[[s[0][0]+0.1,s[0][1]]]).forEach(p=>g.lineTo(p[0],p[1]));g.stroke();
+    });
     g.fillStyle='#E0528F';
-    for(let y=Math.floor(step/2);y<H;y+=step)for(let x=Math.floor(step/2);x<W;x+=step){
-      if(md[(y*W+x)*4+3]>128){g.beginPath();g.arc(x,y,step*0.26,0,7);g.fill();if(!first)first={x,y}}
-    }
-    // start hint: topmost pixel of the glyph (leftmost for LTR sets, rightmost for Hebrew)
-    if(first){
-      let sx=first.x;const y=first.y;const rtl=this.setId==='he';
-      for(let x=rtl?W-1:0;rtl?x>=0:x<W;x+=rtl?-1:1){if(md[(y*W+x)*4+3]>128){sx=x;break}}
-      g.beginPath();g.arc(sx,y,Math.max(9,step*0.9),0,7);g.fillStyle='#43B55B';g.fill();
-      g.lineWidth=3;g.strokeStyle='#fff';g.stroke();
-    }
+    strokes.forEach(s=>{ // dotted centre line
+      if(s.length<2||this.pointAt(s,1).total<penW){g.beginPath();g.arc(s[0][0],s[0][1],penW*0.45,0,7);g.fill();return}
+      this.walk(s,Math.max(8,penW*0.8),p=>{g.beginPath();g.arc(p[0],p[1],penW*0.2,0,7);g.fill()});
+    });
+    strokes.forEach((s,i)=>{ // direction arrows at 55% of each stroke (and 85% of long ones)
+      const info=this.pointAt(s,0.55);if(info.total<penW*2.5)return;
+      const fr=info.total>penW*14?[0.3,0.75]:[0.55];
+      fr.forEach(f=>{const q=this.pointAt(s,f);this.arrow(g,q.p,q.ang,penW*0.95)});
+    });
+    const placed=[];
+    strokes.forEach((s,i)=>{ // numbered start badges, nudged along the stroke when two would overlap
+      const r=Math.max(12,penW*0.75);let [x,y]=s[0];
+      for(const f of [0,0.1,0.18,0.26,0.34]){const q=this.pointAt(s,f).p;if(!placed.some(b=>Math.hypot(b[0]-q[0],b[1]-q[1])<r*2.3)){[x,y]=q;break}}
+      placed.push([x,y]);
+      g.beginPath();g.arc(x,y,r,0,7);g.fillStyle='#43B55B';g.fill();g.lineWidth=3;g.strokeStyle='#fff';g.stroke();
+      g.fillStyle='#fff';g.font=`700 ${Math.round(r*1.3)}px Fredoka, Nunito, sans-serif`;g.textAlign='center';g.textBaseline='middle';g.fillText(String(i+1),x,y+1);
+    });
     // drawing layer
     const c=this.ctx;c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
-    // header
     $('#tchar').textContent=ch;$('#tword').innerHTML=this.wordFor(ch).html;
     $$('#tpick button').forEach((b,i)=>b.style.outline=i===this.idx?'4px solid #E0528F':'');
     this.sayChar();
+  },
+  arrow(g,p,ang,s){
+    g.save();g.translate(p[0],p[1]);g.rotate(ang);
+    g.beginPath();g.moveTo(s,0);g.lineTo(-s*0.7,-s*0.8);g.lineTo(-s*0.3,0);g.lineTo(-s*0.7,s*0.8);g.closePath();
+    g.fillStyle='#A8305F';g.fill();g.lineWidth=2;g.strokeStyle='#fff';g.stroke();g.restore();
   },
   wordFor(ch){
     const set=this.setId;
@@ -764,7 +918,7 @@ const Trace={
   },
   sayChar(){TTS.sayAll(this.wordFor(this.current()).say)},
   step(d){const n=this.sets[this.setId].chars.length;this.idx=(this.idx+d+n)%n;this.show()},
-  clear(){cancelAnimationFrame(this.anim);this.ctx.clearRect(0,0,this.W,this.H);this.passed=false;$('#tmeter').style.width='0%'},
+  clear(){cancelAnimationFrame(this.anim);this.ctx.clearRect(0,0,this.W,this.H);this.passed=false;this.nUser=0;$('#tmeter').style.width='0%'},
   pt(e){const r=this.cv.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}},
   down(e){
     if(this.passed)return;e.preventDefault();cancelAnimationFrame(this.anim);
@@ -772,28 +926,33 @@ const Trace={
     const c=this.ctx;c.lineCap='round';c.lineJoin='round';c.lineWidth=this.penW;c.strokeStyle='#E0528F';
     const p=this.pt(e);this.last=p;c.beginPath();c.moveTo(p.x,p.y);c.lineTo(p.x+0.01,p.y);c.stroke();
     $('#thint').style.opacity=0;
+    // gentle direction hint: first stroke started at the wrong end of stroke 1
+    if(this.nUser===0&&!this.dirHinted&&this.strokes.length){
+      const s=this.strokes[0],a=s[0],b=s[s.length-1];
+      const d0=Math.hypot(p.x-a[0],p.y-a[1]),d1=Math.hypot(p.x-b[0],p.y-b[1]);
+      if(d0>this.penW*3&&d1<d0){this.dirHinted=true;const h=$('#thint');h.textContent=this.he()?'התחילי מהעיגול הירוק 1 🟢':'Start at the green 1 🟢';h.style.opacity=1;TTS.say(this.he()?'התחילי מהעיגול הירוק':'Start at the green number one',this.he()?'he':'en')}
+    }
   },
   move(e){
     if(!this.drawing)return;e.preventDefault();
     const pts=e.getCoalescedEvents?e.getCoalescedEvents():[e];const c=this.ctx;
     pts.forEach(ev=>{const p=this.pt(ev);c.beginPath();c.moveTo(this.last.x,this.last.y);c.lineTo(p.x,p.y);c.stroke();this.last=p});
   },
-  up(e){if(!this.drawing)return;this.drawing=false;this.strokes++;this.check()},
+  up(e){if(!this.drawing)return;this.drawing=false;this.nUser++;this.check()},
   check(){
-    const {W,H,dpr}=this;const dw=this.cv.width;
-    const img=this.ctx.getImageData(0,0,this.cv.width,this.cv.height).data;
-    const a=(x,y)=>img[((Math.floor(y*dpr))*dw+Math.floor(x*dpr))*4+3];
-    const st=5;let tot=0,cov=0,drawn=0,inside=0;
-    for(let y=2;y<H;y+=st)for(let x=2;x<W;x+=st){
-      const i=(y*W+x)*4+3;const on=a(x,y)>40;
-      if(this.maskData[i]>128){tot++;if(on)cov++}
-      if(on){drawn++;if(this.tolData[i]>0)inside++}
-    }
-    const coverage=tot?cov/tot:0,precision=drawn?inside/drawn:1;
+    const {W,H,dpr,penW}=this;const dw=this.cv.width,dh=this.cv.height;
+    const img=this.ctx.getImageData(0,0,dw,dh).data;
+    const a=(x,y)=>{const X=Math.floor(x*dpr),Y=Math.floor(y*dpr);if(X<0||Y<0||X>=dw||Y>=dh)return 0;return img[(Y*dw+X)*4+3]};
+    const r=penW*0.8;let cov=0;
+    this.samples.forEach(([x,y])=>{if(a(x,y)>40||a(x+r,y)>40||a(x-r,y)>40||a(x,y+r)>40||a(x,y-r)>40)cov++});
+    let drawn=0,inside=0;const st=5;
+    for(let y=2;y<H;y+=st)for(let x=2;x<W;x+=st){if(a(x,y)>40){drawn++;if(this.tolData[(y*W+x)*4+3]>0)inside++}}
+    const coverage=this.samples.length?cov/this.samples.length:0,precision=drawn?inside/drawn:1;
     $('#tmeter').style.width=Math.round(coverage*100)+'%';
+    const h=$('#thint');
     if(coverage>=0.6&&precision>=0.55)this.success();
-    else if(precision<0.4&&drawn>60&&!this.hinted){this.hinted=true;const h=$('#thint');const he=this.sets[this.setId].lang==='he';h.textContent=he?'נסי להישאר על הנקודות 🙂':'Try to stay on the dots 🙂';h.style.opacity=1;TTS.say(he?'נסי להישאר על הנקודות':'Try to stay on the dots',he?'he':'en')}
-    else if(this.strokes>=6&&coverage<0.6&&!this.hinted2){this.hinted2=true;const h=$('#thint');h.textContent=this.sets[this.setId].lang==='he'?'לחצי על 👀 Show me אם צריך עזרה':'Tap 👀 Show me if you need help';h.style.opacity=1}
+    else if(precision<0.4&&drawn>60&&!this.hinted){this.hinted=true;h.textContent=this.he()?'נסי להישאר על הנקודות 🙂':'Try to stay on the dots 🙂';h.style.opacity=1;TTS.say(this.he()?'נסי להישאר על הנקודות':'Try to stay on the dots',this.he()?'he':'en')}
+    else if(this.nUser>=6&&coverage<0.6&&!this.hinted2){this.hinted2=true;h.textContent=this.he()?'לחצי על 👀 Show me אם צריך עזרה':'Tap 👀 Show me if you need help';h.style.opacity=1}
   },
   success(){
     this.passed=true;FX.win();burst();award(2);
@@ -804,14 +963,23 @@ const Trace={
     setTimeout(()=>{if(this.passed)this.step(1)},1900);
   },
   demo(){
-    cancelAnimationFrame(this.anim);const {W,H}=this;const ch=this.current();const c=this.ctx;const L=this.lines;
-    c.clearRect(0,0,W,H);this.passed=false;$('#tmeter').style.width='0%';
-    const t0=performance.now(),dur=1400;
+    cancelAnimationFrame(this.anim);const {W,H,penW}=this;const c=this.ctx;
+    c.clearRect(0,0,W,H);this.passed=false;this.nUser=0;$('#tmeter').style.width='0%';
+    const strokes=this.strokes;const lens=strokes.map(s=>Math.max(penW,this.pointAt(s,1).total));
+    const total=lens.reduce((a,b)=>a+b,0);const dur=Math.max(1200,total*4);const t0=performance.now();
     const frame=now=>{
-      const t=Math.min(1,(now-t0)/dur);c.clearRect(0,0,W,H);c.save();
-      c.beginPath();c.rect(0,L.top-10,W,(L.bot-L.top+20)*t);c.clip();
-      c.globalAlpha=0.55;c.fillStyle='#E0528F';c.font=this.font;c.textAlign='center';c.textBaseline='alphabetic';c.fillText(ch,W/2,L.base);c.restore();
-      if(t<1)this.anim=requestAnimationFrame(frame);else setTimeout(()=>{if(!this.drawing)c.clearRect(0,0,W,H)},900);
+      let prog=Math.min(1,(now-t0)/dur)*total;c.clearRect(0,0,W,H);
+      c.lineCap='round';c.lineJoin='round';c.lineWidth=penW;c.strokeStyle='rgba(224,82,143,.6)';let head=null;
+      for(let i=0;i<strokes.length;i++){
+        const s=strokes[i],len=lens[i];const f=Math.max(0,Math.min(1,prog/len));
+        if(f<=0)break;
+        const end=this.pointAt(s,f);c.beginPath();c.moveTo(s[0][0],s[0][1]);
+        let acc=0,target=this.pointAt(s,1).total*f;
+        for(let j=1;j<s.length;j++){const d=Math.hypot(s[j][0]-s[j-1][0],s[j][1]-s[j-1][1]);if(acc+d>=target){c.lineTo(end.p[0],end.p[1]);break}c.lineTo(s[j][0],s[j][1]);acc+=d}
+        c.stroke();if(f<1)head=end.p;prog-=len;
+      }
+      if(head){c.beginPath();c.arc(head[0],head[1],penW*0.9,0,7);c.fillStyle='#43B55B';c.fill()}
+      if((now-t0)<dur)this.anim=requestAnimationFrame(frame);else setTimeout(()=>{if(!this.drawing)c.clearRect(0,0,W,H)},900);
     };
     this.anim=requestAnimationFrame(frame);
     const lang=this.sets[this.setId].lang;TTS.say(lang==='he'?'ככה כותבים. עכשיו את!':'Like this. Now you try!',lang);
