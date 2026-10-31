@@ -70,6 +70,20 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
 .home-foot{margin-top:auto;display:flex;justify-content:space-between;align-items:center;padding:6px 4px 0;color:var(--ink-soft);font-size:15px}
 .link{text-decoration:underline;color:var(--ink-soft);padding:10px}
 
+/* lesson */
+.tile.lesson{grid-column:1/-1;min-height:120px;flex-direction:row;gap:18px;background:linear-gradient(90deg,#FDE3EC,#EBDDF7)}
+.tile.lesson .tile-ico{font-size:64px}
+.tile.lesson .tile-txt{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.tile.lesson .tile-s{text-transform:none;letter-spacing:0;font-size:15px}
+.lbar{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;font-size:20px;font-weight:600;background:var(--white);border-radius:999px;padding:10px 20px;box-shadow:0 3px 0 rgba(59,39,51,.12);direction:ltr}
+.lbar .dots{display:inline-flex;gap:6px}
+.lbar .dots i{width:14px;height:14px;border-radius:50%;background:var(--mud-soft)}
+.lbar .dots i.on{background:var(--ok)}
+.lbar .dots i.miss{background:var(--sun-deep)}
+.rstars{font-size:64px;letter-spacing:4px;line-height:1.2}
+.rstars .dim{opacity:.22;filter:grayscale(1)}
+.rlist{display:flex;flex-direction:column;gap:6px;text-align:left;direction:ltr;font-size:18px;max-height:40vh;overflow:auto}
+.rlist div{display:flex;justify-content:space-between;gap:10px;background:var(--white);border-radius:12px;padding:6px 12px}
 /* module screens */
 .modes{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;flex:none}
 .chip{border-radius:999px;padding:12px 18px;background:var(--white);border:3px solid transparent;font-size:18px;font-weight:500;box-shadow:0 3px 0 rgba(59,39,51,.12);min-height:52px}
@@ -196,6 +210,7 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
         <div><h1>היי <span id="hname">שירלי</span>!</h1><p dir="ltr">What shall we learn today?<small>מה נלמד היום עם פפה?</small></p></div>
       </div>
       <div class="tiles">
+        <button class="tile lesson" data-go="lesson"><span class="tile-ico">🎒</span><span class="tile-txt"><span class="tile-l">Today's lesson · השיעור של היום</span><span class="tile-s">8 rounds · a star rating after each one · ממשיך מאיפה שהפסקת</span></span></button>
         <button class="tile" data-go="trace" style="--tile:var(--pink-soft)"><span class="tile-ico">✏️</span><span class="tile-l">כותבים באצבע</span><span class="tile-s">Trace letters</span></button>
         <button class="tile" data-go="read" style="--tile:var(--sky)"><span class="tile-ico">📖</span><span class="tile-l">קוראים אנגלית</span><span class="tile-s">Reading</span></button>
         <button class="tile" data-go="math" style="--tile:var(--sun)"><span class="tile-ico">🔢</span><span class="tile-l">חשבון</span><span class="tile-s">Numbers</span></button>
@@ -310,7 +325,7 @@ function renderStars(){$('#starN').textContent=S.stars;$('#hname').textContent=S
 function award(n){
   const before=giftCount(); S.stars+=n; save(); renderStars();
   const after=giftCount();
-  if(after>before){const g=GIFTS[after-1];const w=wearing();if(isDress(g))w.dress=g[3];else if(!w.items.includes(after-1))w.items.push(after-1);save();setTimeout(()=>giftModal(g),900)}
+  if(after>before){const g=GIFTS[after-1];const w=wearing();if(isDress(g))w.dress=g[3];else if(!w.items.includes(after-1))w.items.push(after-1);save();if(Lesson.active)Lesson.gifts.push(g);else setTimeout(()=>giftModal(g),900)}
 }
 
 /* ---------- data ---------- */
@@ -394,10 +409,11 @@ function burst(){
 /* ---------- router ---------- */
 const SCREENS=$$('[data-screen]');
 function go(id){SCREENS.forEach(s=>s.hidden=s.dataset.screen!==id);}
-$('#homeBtn').onclick=()=>{FX.tap();try{speechSynthesis.cancel()}catch(e){}go('home');$('#ttl').textContent='Shirly & Peppa 🐷'};
+$('#homeBtn').onclick=()=>{FX.tap();Lesson.stop();try{speechSynthesis.cancel()}catch(e){}go('home');$('#ttl').textContent='Shirly & Peppa 🐷'};
 $$('[data-go]').forEach(b=>b.onclick=()=>{
   FX.tap();const id=b.dataset.go;
   if(id==='trace')Trace.open('upper');
+  else if(id==='lesson')Lesson.start();
   else if(id==='princess'){renderPrincess();go('princess');$('#ttl').textContent='My princess 👸'}
   else startModule(id);
 });
@@ -414,13 +430,14 @@ function bumpStreak(id,ok){
   else{v.miss++;v.run=0;if(v.miss>=3&&v.lv>1){v.lv--;v.miss=0;ev='down'}}
   save();return ev;
 }
-function startModule(id){
+function startModule(id,modeId){
   const M=MODULES[id];M.el=M.el||$(`[data-screen="${id}"]`);
-  cur={id,M,mode:M.modes.find(m=>m.gen)};
+  cur={id,M,mode:(modeId&&M.modes.find(m=>m.id===modeId))||M.modes.find(m=>m.gen)};
   go(id);$('#ttl').textContent=TITLES[id];renderModes();next();
 }
 function renderModes(){
   const box=$('.modes',cur.M.el);box.innerHTML='';
+  if(Lesson.active){box.append(Lesson.bar());return}
   cur.M.modes.forEach(m=>{
     const b=el('button','chip'+(m===cur.mode?' on':''),m.label);
     b.onclick=()=>{FX.tap();if(m.open){m.open();return}cur.mode=m;renderModes();next()};
@@ -429,6 +446,7 @@ function renderModes(){
 }
 function renderStreak(){
   const box=$('.streak',cur.M.el);box.innerHTML='';
+  if(Lesson.active){box.append(el('div','lvl',`Question ${Math.min(Lesson.q+1,ROUND_N)} of ${ROUND_N}`));$('.modes',cur.M.el).innerHTML='';$('.modes',cur.M.el).append(Lesson.bar());return}
   const v=lvState(cur.mode.id),lv=v.lv,need=UPS[lv];
   for(let i=0;i<need;i++)box.append(el('i',i<v.run?'on':''));
   const l=el('div','lvl',cur.id==='hebrew'?'שלב '+lv:'Level '+lv);box.append(l);
@@ -440,8 +458,9 @@ function next(){
   renderStreak();
   if(q.type==='spell')renderSpell(q);else renderChoice(q);
 }
+function afterAnswer(delay){setTimeout(()=>{if(Lesson.active&&Lesson.pending){Lesson.pending=false;Lesson.roundDone()}else next()},delay)}
 function good(q,pre){
-  FX.ok();award(1);const ev=bumpStreak(cur.mode.id,true);renderStreak();
+  FX.ok();award(1);const ev=bumpStreak(cur.mode.id,true);if(Lesson.active)Lesson.pending=Lesson.answered();renderStreak();
   combo++;const extra=q.onGood?q.onGood():[];
   const c=COMBO[q.lang][combo];const lv=level(cur.mode.id);
   const list=(pre?[{t:pre,l:q.lang}]:[]).concat([{t:praise(q.lang),l:q.lang}],extra,c?[{t:nm(c,q.lang),l:q.lang}]:[]);
@@ -449,14 +468,14 @@ function good(q,pre){
   TTS.sayAll(list);
   if(c||ev==='up')burst();
 }
-function bad(q,pre){FX.no();combo=0;bumpStreak(cur.mode.id,false);renderStreak();TTS.sayAll((pre?[{t:pre,l:q.lang}]:[]).concat([{t:retry(q.lang),l:q.lang}]))}
+function bad(q,pre){FX.no();combo=0;bumpStreak(cur.mode.id,false);if(Lesson.active)Lesson.miss();renderStreak();TTS.sayAll((pre?[{t:pre,l:q.lang}]:[]).concat([{t:retry(q.lang),l:q.lang}]))}
 
 function renderChoice(q){
   const g=$('.game',cur.M.el);g.innerHTML='';
   const instr=el('div','instr',(q.instr||'')+(q.he?`<small>${q.he}</small>`:''));
   const prompt=el('div','prompt',q.prompt||'');
   const spk=el('button','icon-btn speak','🔊');spk.setAttribute('aria-label','הקראה');
-  const voice=()=>{const v=(q.voice?q.voice():[]).map(x=>Object.assign({l:q.lang},x));const list=(v[0]&&v[0].t===q.instr)?v:[{t:q.instr,l:q.lang}].concat(v);TTS.sayAll(list)};
+  const voice=()=>{const v=(q.voice?q.voice():[]).map(x=>Object.assign({l:q.lang},x));let list=(v[0]&&v[0].t===q.instr)?v:[{t:q.instr,l:q.lang}].concat(v);if(Lesson.announce){list=[{t:Lesson.announce,l:'en'}].concat(list);Lesson.announce=null}TTS.sayAll(list)};
   spk.onclick=()=>{FX.tap();voice()};
   const ch=el('div','choices'+(q.choices.length===2?' c2':q.choices.length===4?' c4':''));
   let done=false;
@@ -465,7 +484,7 @@ function renderChoice(q){
     if(c.dir)b.dir=c.dir;
     b.onclick=()=>{
       if(done||b.disabled)return;
-      if(c.ok){done=true;b.classList.add('ok');good(q,c.say);setTimeout(next,c.say?1900:1500)}
+      if(c.ok){done=true;b.classList.add('ok');good(q,c.say);afterAnswer(c.say?1900:1500)}
       else{b.classList.add('bad');b.disabled=true;bad(q,c.say)}
     };
     ch.append(b);
@@ -492,13 +511,13 @@ function renderSpell(q){
       if(l===word[pos]){
         t.classList.add('used');sl[pos].textContent=l;sl[pos].classList.add('f');pos++;
         FX.tap();TTS.say(PH[l]||l,'en',0.9);
-        if(pos===word.length){setTimeout(()=>{q.onGood=()=>[];good(q,word);setTimeout(next,1800)},300)}
+        if(pos===word.length){setTimeout(()=>{q.onGood=()=>[];good(q,word);afterAnswer(1800)},300)}
       }else{t.classList.add('bad');setTimeout(()=>t.classList.remove('bad'),450);bad(q)}
     };
     tiles.append(t);
   });
   g.append(prompt,spk,slots,tiles);
-  setTimeout(()=>TTS.sayAll([{t:'Spell',l:'en'},{t:word,l:'en'}]),350);
+  setTimeout(()=>{const l=[{t:'Spell the word',l:'en'},{t:word,l:'en'}];if(Lesson.announce){l.unshift({t:Lesson.announce,l:'en'});Lesson.announce=null}TTS.sayAll(l)},350);
 }
 
 /* ---------- generators: reading ---------- */
@@ -665,6 +684,75 @@ const MODULES={
     {id:'tr-he',label:'✏️ כתיבה',open:()=>Trace.open('he')}]}
 };
 
+/* ---------- guided lesson: rounds of 5 questions (or 3 letters), star rating after each ---------- */
+const ROUND_N=5;
+const PLAYLIST=[['read','sounds'],['math','count'],['trace','upper',3],['read','words'],['hebrew','heletter'],['math','add'],['read','sight'],['trace','he',2],['hebrew','heword'],['math','cmp'],['read','sent'],['trace','lower',3],['math','seq'],['hebrew','hefirst'],['read','spell'],['math','sub'],['hebrew','helisten'],['trace','num',3]];
+const LABELS={sounds:['Sounds','🔤'],words:['Words','🐷'],sight:['Listen & find','👂'],spell:['Build a word','🧩'],sent:['Sentences','📖'],count:['How many?','🔢'],add:['Adding','➕'],sub:['Taking away','➖'],cmp:['More or less','⚖️'],seq:['Missing number','🔁'],heletter:['Hebrew letters','🇮🇱'],hefirst:['Hebrew first letter','🇮🇱'],heword:['Hebrew words','🇮🇱'],helisten:['Hebrew listening','🇮🇱'],upper:['Writing ABC','✏️'],lower:['Writing abc','✏️'],num:['Writing numbers','✏️'],he:['Writing Hebrew','✏️']};
+const Lesson={active:false,gifts:[],rounds:[],i:0,q:0,score:0,first:true,results:[],pending:false,announce:null,list:[],k:0,timer:0,
+  start(){
+    const pos=S.lessonPos||0;this.rounds=Array.from({length:8},(_,k)=>PLAYLIST[(pos+k)%PLAYLIST.length]);
+    this.active=true;this.i=0;this.results=[];this.gifts=[];this.begin(true);
+  },
+  stop(){this.active=false;clearTimeout(this.timer);$$('.modal').forEach(m=>m.remove())},
+  round(){return this.rounds[this.i]},
+  isTrace(){return this.active&&this.round()[0]==='trace'},
+  label(r){return LABELS[r[1]]},
+  total(r){return r[0]==='trace'?r[2]:ROUND_N},
+  begin(firstRound){
+    const r=this.round();this.q=0;this.score=0;this.first=true;this.pending=false;
+    const [name]=this.label(r);
+    this.announce=(firstRound?`Let's start with ${name}!`:`Round ${this.i+1}: ${name}!`);
+    if(r[0]==='trace'){
+      const chars=Trace.sets[r[1]].chars;
+      let picks=shuffle(chars.map((c,i)=>i).filter(i=>!S.traced[r[1]+chars[i]])).slice(0,r[2]);
+      if(picks.length<r[2])picks=picks.concat(shuffle(chars.map((c,i)=>i).filter(i=>!picks.includes(i))).slice(0,r[2]-picks.length));
+      this.list=picks;this.k=0;Trace.open(r[1]);Trace.idx=picks[0];Trace.show();
+    }else startModule(r[0],r[1]);
+  },
+  bar(){
+    const r=this.round();const [name,ico]=this.label(r);const n=this.total(r);
+    const dots=Array.from({length:n},(_,i)=>`<i class="${i<this.q?'on':''}"></i>`).join('');
+    return el('div','lbar',`<span>🎒 Round ${this.i+1}/${this.rounds.length}</span><span>${ico} ${name}</span><span class="dots">${dots}</span>`);
+  },
+  answered(){this.q++;if(this.first)this.score++;this.first=true;return this.q>=ROUND_N},
+  miss(){this.first=false},
+  traceNext(){this.k++;if(this.k>=this.list.length)this.roundDone();else{Trace.idx=this.list[this.k];Trace.show()}},
+  roundDone(){
+    const r=this.round();const n=this.total(r);const sc=Math.min(n,this.score);const [name,ico]=this.label(r);
+    const stars=sc>=n?3:sc>=Math.ceil(n*0.6)?2:1;
+    this.results.push({name,ico,sc,n,stars});award(stars);
+    const msg=stars===3?`Perfect, ${S.nameEn||'Shirly'}!`:stars===2?`Great work, ${S.nameEn||'Shirly'}!`:'Good try! Keep practising.';
+    const he=stars===3?'מושלם!':stars===2?'עבודה מצוינת!':'ניסיון יפה! ממשיכים להתאמן';
+    const last=this.i+1>=this.rounds.length;const nextName=last?null:this.label(this.rounds[this.i+1])[0];
+    FX.win();if(stars===3)burst();
+    const m=el('div','modal',`<div class="card"><h2 dir="ltr">${ico} ${name}</h2><div class="rstars">${'⭐'.repeat(stars)}<span class="dim">${'⭐'.repeat(3-stars)}</span></div>
+      <p style="margin:0;font-size:26px;font-weight:600" dir="ltr">${sc} out of ${n}!</p><p style="margin:0;font-size:20px" dir="ltr">${msg}</p><p style="margin:0;font-size:15px;color:var(--ink-soft)">${sc} מתוך ${n} · ${he}</p>
+      <div class="row"><button class="ctl pri" id="rnext">${last?'Finish 🎒':`Next: ${nextName} ▶`}</button></div></div>`);
+    document.body.append(m);
+    const go2=()=>{clearTimeout(this.timer);m.remove();this.next()};
+    $('#rnext',m).onclick=()=>{FX.tap();go2()};
+    this.timer=setTimeout(go2,7000);
+    TTS.sayAll([{t:`${name} finished! ${sc} out of ${n}.`,l:'en'},{t:msg,l:'en'}]);
+  },
+  next(){this.i++;if(this.i>=this.rounds.length)this.finish();else this.begin(false)},
+  finish(){
+    S.lessonPos=((S.lessonPos||0)+this.rounds.length)%PLAYLIST.length;S.lessons=(S.lessons||0)+1;save();
+    this.active=false;award(5);FX.win();burst();
+    const tot=this.results.reduce((a,r)=>a+r.stars,0),max=this.results.length*3;
+    const rows=this.results.map(r=>`<div><span>${r.ico} ${r.name}</span><span>${'⭐'.repeat(r.stars)} ${r.sc}/${r.n}</span></div>`).join('');
+    const m=el('div','modal',`<div class="card"><h2 dir="ltr">Lesson complete! 🎒</h2><p style="margin:0;font-size:22px" dir="ltr">${tot} of ${max} stars · +5 bonus ⭐</p><div class="rlist">${rows}</div>
+      <p style="margin:0;font-size:15px;color:var(--ink-soft)">סיימת את השיעור! כל הכבוד</p>
+      <div class="row"><button class="ctl pri" id="lprincess">My princess 👸</button><button class="ctl" id="lhome">Home 🏠</button></div></div>`);
+    document.body.append(m);
+    const gifts=this.gifts.slice();this.gifts=[];
+    const showGifts=then=>{const g=gifts.shift();if(!g){then();return}giftModal(g);const mm=$$('.modal').pop();$('#mok',mm).onclick=()=>{FX.tap();mm.remove();showGifts(then)};$('#mlater',mm).onclick=()=>{FX.tap();mm.remove();showGifts(then)}};
+    $('#lprincess',m).onclick=()=>{FX.tap();m.remove();showGifts(()=>{renderPrincess();go('princess');$('#ttl').textContent='My princess 👸'})};
+    $('#lhome',m).onclick=()=>{FX.tap();m.remove();showGifts(()=>{go('home');$('#ttl').textContent='Shirly & Peppa 🐷'})};
+    if(gifts.length)$('.rlist',m).insertAdjacentHTML('afterend',`<p style="margin:0;font-size:18px" dir="ltr">🎁 ${gifts.length} new gift${gifts.length>1?'s':''} for your princess!</p>`);
+    TTS.sayAll([{t:`Lesson complete, ${S.nameEn||'Shirly'}! You earned ${tot} stars. Peppa is so proud of you!`,l:'en'}]);
+  }
+};
+
 /* ---------- tracing: stroke data (box 0..100 wide; y: 0 top line, 100 baseline, 135 descender) ---------- */
 const arc=(cx,cy,rx,ry,a0,a1,n)=>{const pts=[];n=n||Math.max(6,Math.round(Math.abs(a1-a0)/15));for(let i=0;i<=n;i++){const a=(a0+(a1-a0)*i/n)*Math.PI/180;pts.push([cx+rx*Math.cos(a),cy+ry*Math.sin(a)])}return pts};
 const STROKES={
@@ -794,6 +882,7 @@ const Trace={
   },
   renderChips(){
     const box=$('#tmodes');box.innerHTML='';
+    if(Lesson.active){box.append(Lesson.bar());return}
     Object.entries(this.sets).forEach(([id,s])=>{
       const b=el('button','chip'+(id===this.setId?' on':''),s.label);
       b.onclick=()=>{FX.tap();this.open(id)};box.append(b);
@@ -916,8 +1005,8 @@ const Trace={
     const name=set==='lower'?`little ${ch}`:ch;
     return {html:`<span dir="ltr">${ch} · ${r[1]} ${r[2]}</span>`,say:[{t:name,l:'en'},{t:PH[ch.toLowerCase()]+'.',l:'en',rate:0.75},{t:r[1],l:'en'}]};
   },
-  sayChar(){TTS.sayAll(this.wordFor(this.current()).say)},
-  step(d){const n=this.sets[this.setId].chars.length;this.idx=(this.idx+d+n)%n;this.show()},
+  sayChar(){let l=this.wordFor(this.current()).say;if(Lesson.announce){l=[{t:Lesson.announce,l:'en'}].concat(l);Lesson.announce=null}TTS.sayAll(l)},
+  step(d){if(Lesson.active&&Lesson.isTrace()){Lesson.traceNext();return}const n=this.sets[this.setId].chars.length;this.idx=(this.idx+d+n)%n;this.show()},
   clear(){cancelAnimationFrame(this.anim);this.ctx.clearRect(0,0,this.W,this.H);this.passed=false;this.nUser=0;$('#tmeter').style.width='0%'},
   pt(e){const r=this.cv.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}},
   down(e){
@@ -960,6 +1049,7 @@ const Trace={
     const lang=this.sets[this.setId].lang;
     TTS.sayAll([{t:praise(lang),l:lang}]);
     const h=$('#thint');h.textContent=lang==='he'?'מעולה! ⭐⭐':'Brilliant! ⭐⭐';h.style.opacity=1;
+    if(Lesson.active&&Lesson.isTrace()){Lesson.score++;Lesson.q++;this.renderChips();setTimeout(()=>{if(this.passed)Lesson.traceNext()},1900);return}
     setTimeout(()=>{if(this.passed)this.step(1)},1900);
   },
   demo(){
